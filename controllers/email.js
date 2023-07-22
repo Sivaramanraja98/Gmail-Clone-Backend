@@ -4,18 +4,14 @@ const { validationResult } = require('express-validator');
 
 const getAllEmails = async (request, response, next) => {
   try {
-    // find the user (by id from token) and select its mailbox
-    // populate all categories in the mailbox with email data
+    // find the user (by id from token) and select it's mailbox
+    // populate all categories in mailbox with email data
     const { mailbox } = await Account.findOne({ _id: request.user })
       .select('mailbox')
-      .populate('mailbox.inbox mailbox.outbox mailbox.drafts mailbox.trash mailbox.favorite');
+      .populate('mailbox.inbox mailbox.outbox mailbox.drafts mailbox.trash');
     console.log('Emails found', mailbox);
 
-    const emails = await Email.find({});
-
-    console.log("Emails: ", emails);
-
-    response.status(200).json({ message: 'Emails found', mailbox, emails });
+    response.status(200).json({ message: 'Emails found', mailbox });
   } catch (error) {
     console.log(error);
     response.status(500);
@@ -32,119 +28,37 @@ const sendEmail = async (request, response, next) => {
         errors: validationErrors.errors,
       });
 
-    const id = request.params.id;
-    const replyId = request.params.replyId;
-
-    let mailSubject =
-      id === replyId && id !== 'undefined' ? 'Re: ' + request.body.subject : request.body.subject;
-
     // construct outgoing email
     const newEmailOut = new Email({
       from: request.body.from,
       to: request.body.to,
-      subject: mailSubject,
+      subject: request.body.subject,
       message: request.body.message,
     });
     // save outgoing email
     const savedEmailOut = await newEmailOut.save();
     console.log('Email sent', savedEmailOut);
 
+    // generate a random reply email
+    const newEmailIn = new Email({
+      from: request.body.to,
+      to: request.body.from,
+      subject: 'Re: ' + request.body.subject,
+      message: txtgen.paragraph(),
+    });
+    // save random reply email
+    const savedEmailIn = await newEmailIn.save();
+    console.log('Reply received', savedEmailIn);
+
     response
       .status(201)
-      .json({ message: 'Email sent, reply received', sent: savedEmailOut });
+      .json({ message: 'Email sent, reply received', sent: savedEmailOut, received: savedEmailIn });
 
-    // get user and update its email IDs (outbox)
-    const foundSenderAccount = await Account.findOne({ _id: request.user });
-    const foundReceiverAccount = await Account.findOne({ email: request.body.to });
-
-    if (id == 'undefined' || replyId == 'undefined') {
-      foundSenderAccount.mailbox.outbox.push(savedEmailOut._id);
-      foundReceiverAccount.mailbox.inbox.push(savedEmailOut._id);
-    } else if (id === replyId) {
-      foundSenderAccount.mailbox.outbox.push(id);
-      foundReceiverAccount.mailbox.inbox.push(id);
-
-      let inbox = foundSenderAccount.mailbox.inbox;
-      for (let i = 0; i < inbox.length; i++) {
-        if (inbox[i].equals(id)) {
-          inbox.splice(i, 1);
-          break;
-        }
-      }
-
-      let outbox = foundReceiverAccount.mailbox.outbox;
-      for (let i = 0; i < outbox.length; i++) {
-        if (outbox[i].equals(id)) {
-          outbox.splice(i, 1);
-          break;
-        }
-      }
-
-      foundReceiverAccount.mailbox.inboxReply.push({ inboxId: id, replyId: [savedEmailOut._id] });
-      foundReceiverAccount.mailbox.outboxReply.push({ outboxId: id });
-      foundSenderAccount.mailbox.outboxReply.push({ outboxId: id, replyId: [savedEmailOut._id] });
-      foundSenderAccount.mailbox.inboxReply.push({ inboxId: id });
-
-      let read = foundReceiverAccount.mailbox.read;
-      for (let i = 0; i < read.length; i++) {
-        if (read[i].equals(id)) {
-          read.splice(i, 1);
-          break;
-        }
-      }
-    } else {
-      foundSenderAccount.mailbox.outbox.push(id);
-      foundReceiverAccount.mailbox.inbox.push(id);
-
-      let inbox = foundSenderAccount.mailbox.inbox;
-      for (let i = 0; i < inbox.length; i++) {
-        if (inbox[i].equals(id)) {
-          inbox.splice(i, 1);
-          break;
-        }
-      }
-
-      let outbox = foundReceiverAccount.mailbox.outbox;
-      for (let i = 0; i < outbox.length; i++) {
-        if (outbox[i].equals(id)) {
-          outbox.splice(i, 1);
-          break;
-        }
-      }
-
-      foundReceiverAccount.mailbox.inboxReply.forEach((inbox) => {
-        if (inbox.inboxId == id) {
-          inbox.replyId.push(replyId);
-          inbox.replyId.push(savedEmailOut._id);
-        }
-      });
-
-      foundSenderAccount.mailbox.outboxReply.forEach((outbox) => {
-        if (outbox.outboxId == id) {
-          outbox.replyId.push(replyId);
-          outbox.replyId.push(savedEmailOut._id);
-        }
-      });
-
-      let receiverRead = foundReceiverAccount.mailbox.read;
-      for (let i = 0; i < receiverRead.length; i++) {
-        if (receiverRead[i].equals(id)) {
-          receiverRead.splice(i, 1);
-          break;
-        }
-      }
-
-      let senderRead = foundSenderAccount.mailbox.read;
-      for (let i = 0; i < senderRead.length; i++) {
-        if (senderRead[i].equals(id)) {
-          senderRead.splice(i, 1);
-          break;
-        }
-      }
-    }
-
-    await foundSenderAccount.save();
-    await foundReceiverAccount.save();
+    // get user and update it's email ID's (outbox)
+    const foundAccount = await Account.findOne({ _id: request.user });
+    foundAccount.mailbox.outbox.push(savedEmailOut._id);
+    foundAccount.mailbox.inbox.push(savedEmailIn._id);
+    await foundAccount.save();
   } catch (error) {
     console.log(error);
     response.status(500);
@@ -167,8 +81,8 @@ const saveDraft = async (request, response, next) => {
 
     response.status(201).json({ message: 'Draft saved', draft: savedDraft });
 
-    // this runs after the response has been sent to the client
-    // find the user and update its email IDs
+    // this runs after response has been sent to client
+    // find user and update it's email ID's
     const foundAccount = await Account.findOne({ _id: request.user });
     foundAccount.mailbox.drafts.push(savedDraft._id);
     await foundAccount.save();
@@ -180,17 +94,17 @@ const saveDraft = async (request, response, next) => {
 
 const updateDraft = async (request, response, next) => {
   try {
-    // find the draft using the id
+    // find draft using id
     let foundDraft = await Email.findOne({ _id: request.params.id });
     if (!foundDraft)
       return response.status(404).json({ message: 'Email not found', id: request.params.id });
 
-    // update its contents
+    // update it contents
     foundDraft.to = request.body.to;
     foundDraft.subject = request.body.subject;
     foundDraft.message = request.body.message;
 
-    // save the draft
+    // and save the draft
     const savedDraft = await foundDraft.save();
     console.log('Draft updated', savedDraft);
 
@@ -203,22 +117,12 @@ const updateDraft = async (request, response, next) => {
 
 const moveToTrash = async (request, response, next) => {
   try {
-    // find the user by ID
+    // find user by ID
     const foundUser = await Account.findOne({ _id: request.user });
 
-    // locate the email in inbox/outbox/drafts and move it to trash
-    let { inbox, outbox, drafts, trash, favorite } = foundUser.mailbox;
+    // locate email in inbox/outbox/drafts and move it to trash
+    let { inbox, outbox, drafts, trash } = foundUser.mailbox;
     let isEmailFound = false;
-
-    if (!isEmailFound)
-      // search favorite
-      for (let i = 0; i < favorite.length; i++) {
-        if (favorite[i].equals(request.params.id)) {
-          favorite.splice(i, 1);
-          console.log('Unfavorited Mail', request.params.id);
-          break;
-        }
-      }
 
     if (!isEmailFound)
       // search inbox
@@ -256,11 +160,11 @@ const moveToTrash = async (request, response, next) => {
         }
       }
 
-    // save changes, then populate the mailbox for the client
+    // save changes, then populate mailbox for client
     const savedUser = await foundUser.save();
     const { mailbox } = await Account.populate(
       savedUser,
-      'mailbox.inbox mailbox.outbox mailbox.drafts mailbox.trash mailbox.favorite',
+      'mailbox.inbox mailbox.outbox mailbox.drafts mailbox.trash',
     );
 
     response.status(200).json({ message: 'Moved to trash', mailbox });
@@ -272,15 +176,15 @@ const moveToTrash = async (request, response, next) => {
 
 const removeFromTrash = async (request, response, next) => {
   try {
-    // find the user by ID
+    // find user by ID
     const foundUser = await Account.findOne({ _id: request.user }).populate(
       'mailbox.inbox mailbox.outbox mailbox.drafts mailbox.trash',
     );
 
-    // locate the email in trash and return it to its relative category
+    // locate email in trash, and return to it's relative category
     const { inbox, outbox, drafts, trash } = foundUser.mailbox;
     for (let i = 0; i < trash.length; i++) {
-      // if the IDs match, the email was found in the current loop
+      // if id's match, email was found in current loop
       if (trash[i]._id.equals(request.params.id)) {
         if (trash[i].to === '' || trash[i].subject === '' || trash[i].message === '') {
           // email origin is drafts
@@ -303,7 +207,7 @@ const removeFromTrash = async (request, response, next) => {
       }
     }
 
-    // save changes, then populate the mailbox for the client
+    // save changes, then populate mailbox for client
     const savedUser = await foundUser.save();
     const { mailbox } = await Account.populate(
       savedUser,
@@ -319,50 +223,36 @@ const removeFromTrash = async (request, response, next) => {
 
 const toggleEmailProperty = async (request, response, next) => {
   try {
-    // find the email by id
+    // find email by id,
     const foundEmail = await Email.findOne({ _id: request.params.id });
     if (!foundEmail)
       return response.status(404).json({ message: 'Email not found', id: request.params.id });
 
-    const foundAccount = await Account.findOne({ _id: request.user });
-    // update its chosen property
+    // and update its chosen property
     switch (request.params.toggle) {
       case 'read':
-        foundAccount.mailbox.read.push(request.params.id);
-        foundAccount.save();
+        foundEmail.read = true;
         break;
       case 'unread':
-        let read = foundAccount.mailbox.read;
-        for (let i = 0; i < read.length; i++) {
-          if (read[i].equals(request.params.id)) {
-            read.splice(i, 1);
-            break;
-          }
-        }
-        foundAccount.save();
+        foundEmail.read = false;
         break;
       case 'favorite':
-        foundAccount.mailbox.favorite.push(request.params.id);
-        foundAccount.save();
+        foundEmail.favorite = true;
         break;
       case 'unfavorite':
-        let favorite = foundAccount.mailbox.favorite;
-        for (let i = 0; i < favorite.length; i++) {
-          if (favorite[i].equals(request.params.id)) {
-            favorite.splice(i, 1);
-            break;
-          }
-        }
-        foundAccount.save();
+        foundEmail.favorite = false;
         break;
       default:
         return response.status(404).json({ message: "Wrong params, can't parse request" });
     }
 
-    // return the email
+    const savedEmail = await foundEmail.save();
+    console.log(`${request.params.toggle} status updated`, savedEmail);
+
+    // return email
     response
       .status(200)
-      .json({ message: `${request.params.toggle} status updated`, email: foundEmail });
+      .json({ message: `${request.params.toggle} status updated`, email: savedEmail });
   } catch (error) {
     console.log(error);
     response.status(500);
@@ -371,15 +261,15 @@ const toggleEmailProperty = async (request, response, next) => {
 
 const deleteEmail = async (request, response, next) => {
   try {
-    // find the email by id and delete it
+    // find email by id, and update it delete it
     await Email.deleteOne({ _id: request.params.id });
     console.log('Email deleted', request.params.id);
 
-    // return the email ID (so the client can remove the email from a state)
+    // return email ID (so client can remove the email from a state)
     response.status(200).json({ message: 'Email deleted', id: request.params.id });
 
-    // this runs after the response has been sent to the client
-    // find the user and update its email IDs
+    // this runs after response has been sent to client
+    // find user and update it's email ID's
     const foundAccount = await Account.findOne({ _id: request.user });
     let isEmailFound = false;
     let trashbox = foundAccount.mailbox.trash;
@@ -399,15 +289,6 @@ const deleteEmail = async (request, response, next) => {
         }
       }
     }
-
-    let read = foundAccount.mailbox.read;
-    for (let i = 0; i < read.length; i++) {
-      if (read[i].equals(request.params.id)) {
-        read.splice(i, 1);
-        break;
-      }
-    }
-
     await foundAccount.save();
   } catch (error) {
     console.log(error);
