@@ -189,10 +189,12 @@ async function updateDraft(request, response, next) {
   }
 }
 
-async function moveToTrash(request, response, next) {
+export async function moveToTrash(request, response, next) {
   try {
+    // find user by ID
     const foundUser = await Account.findOne({ _id: request.user });
 
+    // locate email in inbox/outbox/drafts and move it to trash
     let { inbox, outbox, drafts, trash, favorite } = foundUser.mailbox;
     let isEmailFound = false;
 
@@ -242,6 +244,7 @@ async function moveToTrash(request, response, next) {
         }
       }
 
+    // save changes, then populate mailbox for client
     const savedUser = await foundUser.save();
     const { mailbox } = await Account.populate(
       savedUser,
@@ -251,7 +254,7 @@ async function moveToTrash(request, response, next) {
     response.status(200).json({ message: 'Moved to trash', mailbox });
   } catch (error) {
     console.log(error);
-    response.status(500).json({ message: 'Server Error' });
+    response.status(500);
   }
 }
 
