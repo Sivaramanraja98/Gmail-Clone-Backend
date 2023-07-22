@@ -365,7 +365,7 @@ const toggleEmailProperty = async (request, response, next) => {
       .json({ message: `${request.params.toggle} status updated`, email: foundEmail });
   } catch (error) {
     console.log(error);
-    response.status(500);
+    response.status(500).send({ message: 'Internal Server Error' });
   }
 };
 
