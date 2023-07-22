@@ -210,18 +210,18 @@ const moveToTrash = async (request, response, next) => {
     let { inbox, outbox, drafts, trash, favorite } = foundUser.mailbox;
     let isEmailFound = false;
 
-    if (!isEmailFound)
-      // search favorite
-      for (let i = 0; i < favorite.length; i++) {
-        if (favorite[i].equals(request.params.id)) {
-          favorite.splice(i, 1);
-          console.log('Unfavorited Mail', request.params.id);
-          break;
-        }
+    // Search for the email in favorite and remove it if found
+    for (let i = 0; i < favorite.length; i++) {
+      if (favorite[i].equals(request.params.id)) {
+        favorite.splice(i, 1);
+        console.log('Unfavorited Mail', request.params.id);
+        isEmailFound = true;
+        break;
       }
+    }
 
-    if (!isEmailFound)
-      // search inbox
+    // Search for the email in inbox and move it to trash
+    if (!isEmailFound) {
       for (let i = 0; i < inbox.length; i++) {
         if (inbox[i].equals(request.params.id)) {
           trash.push(inbox[i]);
@@ -231,9 +231,10 @@ const moveToTrash = async (request, response, next) => {
           break;
         }
       }
+    }
 
-    if (!isEmailFound)
-      // search outbox
+    // Search for the email in outbox and move it to trash
+    if (!isEmailFound) {
       for (let i = 0; i < outbox.length; i++) {
         if (outbox[i].equals(request.params.id)) {
           trash.push(outbox[i]);
@@ -243,9 +244,10 @@ const moveToTrash = async (request, response, next) => {
           break;
         }
       }
+    }
 
-    if (!isEmailFound)
-      // search drafts
+    // Search for the email in drafts and move it to trash
+    if (!isEmailFound) {
       for (let i = 0; i < drafts.length; i++) {
         if (drafts[i].equals(request.params.id)) {
           trash.push(drafts[i]);
@@ -255,6 +257,12 @@ const moveToTrash = async (request, response, next) => {
           break;
         }
       }
+    }
+
+    if (!isEmailFound) {
+      // If the email was not found in any of the above categories, it doesn't exist, so throw an error.
+      return response.status(404).json({ message: 'Email not found', id: request.params.id });
+    }
 
     // save changes, then populate the mailbox for the client
     const savedUser = await foundUser.save();
@@ -266,7 +274,7 @@ const moveToTrash = async (request, response, next) => {
     response.status(200).json({ message: 'Moved to trash', mailbox });
   } catch (error) {
     console.log(error);
-    response.status(500);
+    response.status(500).send({ message: 'Internal Server Error' });
   }
 };
 
@@ -369,10 +377,14 @@ const toggleEmailProperty = async (request, response, next) => {
   }
 };
 
+
 const deleteEmail = async (request, response, next) => {
   try {
     // find the email by id and delete it
-    await Email.deleteOne({ _id: request.params.id });
+    const deletedEmail = await Email.findOneAndDelete({ _id: request.params.id });
+    if (!deletedEmail)
+      return response.status(404).json({ message: 'Email not found', id: request.params.id });
+
     console.log('Email deleted', request.params.id);
 
     // return the email ID (so the client can remove the email from a state)
@@ -382,6 +394,8 @@ const deleteEmail = async (request, response, next) => {
     // find the user and update its email IDs
     const foundAccount = await Account.findOne({ _id: request.user });
     let isEmailFound = false;
+
+    // Remove the email from trash if it was found there
     let trashbox = foundAccount.mailbox.trash;
     for (let i = 0; i < trashbox.length; i++) {
       if (trashbox[i].equals(request.params.id)) {
@@ -390,7 +404,9 @@ const deleteEmail = async (request, response, next) => {
         break;
       }
     }
+
     if (!isEmailFound) {
+      // If the email was not found in the trash, it may be in drafts, so check there.
       let drafts = foundAccount.mailbox.drafts;
       for (let i = 0; i < drafts.length; i++) {
         if (drafts[i].equals(request.params.id)) {
@@ -400,6 +416,12 @@ const deleteEmail = async (request, response, next) => {
       }
     }
 
+    if (!isEmailFound) {
+      // If the email was still not found, it means it was permanently deleted, so there's nothing else to do.
+      return;
+    }
+
+    // Remove the email from the read list (if present) since it's no longer relevant.
     let read = foundAccount.mailbox.read;
     for (let i = 0; i < read.length; i++) {
       if (read[i].equals(request.params.id)) {
@@ -411,7 +433,7 @@ const deleteEmail = async (request, response, next) => {
     await foundAccount.save();
   } catch (error) {
     console.log(error);
-    response.status(500);
+    response.status(500).send({ message: 'Internal Server Error' });
   }
 };
 
