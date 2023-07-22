@@ -189,7 +189,7 @@ async function updateDraft(request, response, next) {
   }
 }
 
-export async function moveToTrash(request, response, next) {
+async function moveToTrash(request, response, next) {
   try {
     // find user by ID
     const foundUser = await Account.findOne({ _id: request.user });
